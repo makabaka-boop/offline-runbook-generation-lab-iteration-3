@@ -8,11 +8,12 @@ interface Props {
   failed: InstallFailure | null;
   failureText: Record<FailureCode, string>;
   onInstall: (version: string) => void;
+  onReuse: (version: string) => void;
   onCancel: () => void;
 }
 
 /** 首次安装从未成功 / 失败后的页面：明确提示“无可用离线包”。 */
-export function NoPackage({ catalog, swReady, installing, failed, onInstall, onCancel }: Props) {
+export function NoPackage({ catalog, swReady, installing, failed, onInstall, onReuse, onCancel }: Props) {
   return (
     <>
       <div className="banner warn" data-testid="no-package">
@@ -28,6 +29,9 @@ export function NoPackage({ catalog, swReady, installing, failed, onInstall, onC
 
       <div className="panel">
         <h2>内置手册版本</h2>
+        <div className="small" style={{ marginBottom: 10 }}>
+          尚无已核验版本可复用，“按内容摘要复用安装”暂不可用；请先完整安装任一版本。
+        </div>
         {catalog.map((entry) => (
           <VersionCard
             key={entry.version}
@@ -37,6 +41,7 @@ export function NoPackage({ catalog, swReady, installing, failed, onInstall, onC
             installing={installing}
             failed={failed}
             onInstall={onInstall}
+            onReuse={onReuse}
             onCancel={onCancel}
           />
         ))}

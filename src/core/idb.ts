@@ -50,6 +50,12 @@ export async function readState(db?: IDBDatabase): Promise<PersistedState> {
               version: s.pending.version,
               cacheName: String(s.pending.cacheName),
               startedAt: Number(s.pending.startedAt) || 0,
+              // 旧版记录缺代次字段：以暂存缓存名（已编码代次）兜底，仍可被识别与清理。
+              generation:
+                typeof s.pending.generation === 'string'
+                  ? s.pending.generation
+                  : String(s.pending.cacheName),
+              mode: s.pending.mode === 'reuse' ? 'reuse' : 'full',
             }
           : null,
     };

@@ -73,7 +73,11 @@ export function Booted({ swReady }: Props) {
         failureText={FAILURE_TEXT}
         onInstall={(version) => {
           const entry = findEntry(version);
-          if (entry) void coordinator.install(entry);
+          if (entry) void coordinator.install(entry, 'full');
+        }}
+        onReuse={(version) => {
+          const entry = findEntry(version);
+          if (entry) void coordinator.install(entry, 'reuse');
         }}
         onCancel={() => void coordinator.cancel()}
       />
@@ -98,7 +102,11 @@ export function Booted({ swReady }: Props) {
       dismissSwitchNotice={() => setSwitchNotice(false)}
       onInstall={(version) => {
         const entry = findEntry(version);
-        if (entry) void coordinator.install(entry);
+        if (entry) void coordinator.install(entry, 'full');
+      }}
+      onReuse={(version) => {
+        const entry = findEntry(version);
+        if (entry) void coordinator.install(entry, 'reuse');
       }}
       onCancel={() => void coordinator.cancel()}
     />

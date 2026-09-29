@@ -9,9 +9,11 @@
 export interface FaultRule {
   /** URL 子串匹配，如 /manuals/v2/manifest.json */
   match: string;
-  /** abort：断网；tamper：返回被篡改内容；hang：永不返回；http:<status> */
-  behavior: 'abort' | 'tamper' | 'hang' | 'http';
+  /** abort：断网；tamper：返回被篡改内容；hang：永不返回；delay：延迟若干毫秒后正常返回；http:<status> */
+  behavior: 'abort' | 'tamper' | 'hang' | 'delay' | 'http';
   status?: number;
+  /** behavior 为 delay 时的延迟毫秒数（默认 2000）。 */
+  delayMs?: number;
 }
 
 declare global {
@@ -46,6 +48,11 @@ self.addEventListener('message', (event) => {
       }
       if (rule.behavior === 'hang') {
         return await new Promise(function () {});
+      }
+      if (rule.behavior === 'delay') {
+        const ms = typeof rule.delayMs === 'number' ? rule.delayMs : 2000;
+        await new Promise(function (resolve) { setTimeout(resolve, ms); });
+        return await originalFetch(input, init);
       }
       if (rule.behavior === 'http') {
         return new Response(JSON.stringify({ fault: true }), {

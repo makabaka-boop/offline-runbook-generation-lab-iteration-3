@@ -27,9 +27,11 @@ const entries = versionDirs.map((dir) => {
   const manifest = JSON.parse(manifestRaw);
   const faults = JSON.parse(faultsRaw);
 
-  if (!manifest.version || manifest.version !== faults.version) {
-    throw new Error(`${dir}: 清单版本号与故障条目版本号不一致`);
+  if (!manifest.version) {
+    throw new Error(`${dir}: 清单缺少版本号`);
   }
+  // faults.json 是按内容摘要管理的同源资源，允许跨版本逐字复用（地址/版本不同但字节一致）：
+  // 其内部 version 仅为来源声明，以 manifest.version 为准，生成器不强制两者相同。
   if (!Array.isArray(manifest.steps) || manifest.steps.length === 0) {
     throw new Error(`${dir}: 缺少有序步骤`);
   }

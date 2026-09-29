@@ -46,6 +46,14 @@ export type FailureCode =
   | 'canceled' // 取消
   | 'unknown';
 
+/**
+ * 安装模式：
+ * - full：保留的完整安装入口，每项资源一律重新下载并校验；
+ * - reuse：按内容摘要复用。新清单中 SHA-256 与当前激活版本完全一致的资源，
+ *   从旧版已核验缓存“复制字节”到新版本专属暂存区；其余资源照常下载。
+ */
+export type InstallMode = 'full' | 'reuse';
+
 export const FAILURE_TEXT: Record<FailureCode, string> = {
   checksum: '资源校验失败（SHA-256 不匹配），已丢弃本版缓存',
   network: '下载中断或网络不可用，已丢弃本版缓存',
@@ -68,6 +76,13 @@ export interface PersistedState {
     version: string;
     cacheName: string;
     startedAt: number;
+    /**
+     * 安装代次：每次发起安装都唯一。SW 缓存、版本元数据与进度界面围绕同一代次裁决，
+     * 旧代次的迟到下载即便完成也不得提交。持久化字段（旧记录缺失时按 cacheName 兜底）。
+     */
+    generation: string;
+    /** full：完整下载；reuse：按摘要复用旧版已核验字节。 */
+    mode: InstallMode;
   } | null;
 }
 
@@ -82,13 +97,21 @@ export type InstallerStatus =
   | {
       kind: 'installing';
       version: string;
+      /** 本次安装的唯一代次（迟到下载只可能停留在旧代次，永不激活）。 */
+      generation: string;
+      /** full 或 reuse。 */
+      mode: InstallMode;
       /** 0–100 的整数进度。 */
       progress: number;
       completed: number;
       total: number;
+      /** reuse 模式下从当前激活版本逐字节复制的资源数。 */
+      reusedCount: number;
+      /** 实际走网络获取的资源数。 */
+      fetchedCount: number;
       cancelRequested: boolean;
     }
-  | { kind: 'activated'; version: string }
+  | { kind: 'activated'; version: string; generation: string }
   | { kind: 'failed'; version: string | null; code: FailureCode };
 
 export interface Snapshot {

@@ -36,6 +36,24 @@
           "kind": "faults"
         }
       ]
+    },
+    {
+      "version": "3.0.0",
+      "releasedAt": "2026-09-29",
+      "title": "地下机房现场断电手册（双总线·远程复核版）",
+      "stepCount": 10,
+      "resources": [
+        {
+          "url": "/manuals/v3/manifest.json",
+          "sha256": "209a683bfe3ea17abaf76d87dbd06e9dc4e3a73867c714da050a1f5918604bfa",
+          "kind": "manual"
+        },
+        {
+          "url": "/manuals/v3/faults.json",
+          "sha256": "99eef01f02ee9eebcffc7189ce535b39953ad057158a99627f9ffec21a0aa69e",
+          "kind": "faults"
+        }
+      ]
     }
   ]
 }

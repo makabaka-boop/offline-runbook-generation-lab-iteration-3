@@ -96,6 +96,9 @@ sw.addEventListener('fetch', (event) => {
   // 1) 手册资源：严格“只出激活代际”。
   //    安装请求（带 x-manual-install 标记）强制走网络重新下载，绝不从当前激活缓存读，
   //    从而“重装/升级”确实重新下载校验；离线时安装请求应失败（而非读旧内容）。
+  //    按摘要复用的字节复制发生在页面侧（caches API 直读激活缓存），不经 SW、离线可用，
+  //    且只复制进本次代次的暂存缓存；SW 永远不会把暂存/旧代次缓存对外提供。
+  //    x-manual-generation 随安装代次下发，与缓存/IDB/界面围绕同一代次裁决。
   const isInstallRequest = request.headers.get('x-manual-install') === '1';
   if (isManualResource(url)) {
     event.respondWith(

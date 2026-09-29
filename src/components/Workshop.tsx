@@ -26,6 +26,7 @@ interface Props {
   switchNotice: boolean;
   dismissSwitchNotice: () => void;
   onInstall: (version: string) => void;
+  onReuse: (version: string) => void;
   onCancel: () => void;
 }
 
@@ -45,6 +46,7 @@ export function Workshop(props: Props) {
     switchNotice,
     dismissSwitchNotice,
     onInstall,
+    onReuse,
     onCancel,
   } = props;
   const [tab, setTab] = useState<'steps' | 'drill'>('steps');
@@ -92,8 +94,17 @@ export function Workshop(props: Props) {
 
       {installing && (
         <div className="banner info" data-testid="installing-banner">
-          正在安装版本 {installing.version}：{installing.completed}/{installing.total} ·{' '}
-          {installing.progress}%
+          {installing.mode === 'reuse' ? (
+            <>
+              正在按内容摘要复用安装版本 {installing.version}：{installing.completed}/{installing.total} ·{' '}
+              {installing.progress}%（复用已核验 {installing.reusedCount} 项 · 联网获取 {installing.fetchedCount} 项）
+            </>
+          ) : (
+            <>
+              正在完整安装版本 {installing.version}：{installing.completed}/{installing.total} ·{' '}
+              {installing.progress}%
+            </>
+          )}
           {installing.cancelRequested ? '（正在取消…）' : '。完成校验前不会替换当前手册。'}
         </div>
       )}
@@ -155,8 +166,9 @@ export function Workshop(props: Props) {
       <div className="panel">
         <h2>手册版本管理</h2>
         <div className="small" style={{ marginBottom: 10 }}>
-          新版本只有在所有资源下载且 SHA-256 校验通过后才会激活；中断、取消、断网或配额异常都会清理未激活缓存，
-          当前完整版本继续可用。
+          新版本只有在所有资源就位且 SHA-256 与整份清单复核通过后才会原子激活；中断、取消、断网或配额异常都会清理未激活缓存，
+          当前完整版本继续可用。“按内容摘要复用安装”会把与当前版摘要一致的已核验字节复制到新版暂存区（地址变化也可复用），
+          变化资源正常获取，激活后不引用旧版缓存。
           {!swReady && '（离线服务尚未就绪，暂不能开始安装）'}
         </div>
         {catalog.map((entry) => (
@@ -168,6 +180,7 @@ export function Workshop(props: Props) {
             installing={installing}
             failed={failed}
             onInstall={onInstall}
+            onReuse={onReuse}
             onCancel={onCancel}
           />
         ))}

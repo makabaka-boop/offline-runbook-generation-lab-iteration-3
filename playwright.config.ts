@@ -23,6 +23,10 @@ export default defineConfig({
         // Docker Compose 内通过 http://web 这种非安全上下文注册 SW / 使用 crypto.subtle
         '--unsafely-treat-insecure-origin-as-secure=http://web,http://web:80,http://web:8080,http://web:3000,http://localhost,http://localhost:4173',
       ],
+      // 受限环境（无 root 安装系统依赖）可用 PW_LD_LIBRARY_PATH 注入本地库目录。
+      env: process.env.PW_LD_LIBRARY_PATH
+        ? { ...process.env, LD_LIBRARY_PATH: process.env.PW_LD_LIBRARY_PATH }
+        : process.env,
     },
   },
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],

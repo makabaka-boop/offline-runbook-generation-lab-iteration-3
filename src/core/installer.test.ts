@@ -11,8 +11,9 @@ import {
 } from './installer';
 import type { CatalogEntry, PersistedState, ResourceRef } from './types';
 import { INITIAL_PERSISTED_STATE } from './types';
+import { encodeCanonicalResourceList } from './resource-digest';
 
-const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+const sha = (text: string | Uint8Array | Buffer) => createHash('sha256').update(text).digest('hex');
 
 const makeRef = (version: string, name: 'manifest.json' | 'faults.json', body: string): ResourceRef => ({
   url: `/manuals/v${version === '1.0.0' ? '1' : '2'}/${name}`,
@@ -28,15 +29,49 @@ const makeEntry = (version: '1.0.0' | '2.0.0'): { entry: CatalogEntry; bodies: M
   const r2 = makeRef(version, 'faults.json', faultsBody);
   bodies.set(r1.url, manifestBody);
   bodies.set(r2.url, faultsBody);
+  const resources = [r1, r2];
   return {
     entry: {
       version,
       releasedAt: '2026-01-01',
       title: `v${version}`,
       stepCount: 1,
-      resources: [r1, r2],
+      resources,
+      resourcesSha256: sha(Buffer.from(encodeCanonicalResourceList(resources))),
     },
     bodies,
+  };
+};
+
+
+const makeReuseEntry = (): { v1: CatalogEntry; v2: CatalogEntry; bodies: Map<string, string> } => {
+  const v1Manifest = JSON.stringify({ version: '1.0.0' });
+  const v2Manifest = JSON.stringify({ version: '2.0.0' });
+  const sharedFaults = JSON.stringify({ shared: true });
+  const r1m: ResourceRef = { url: '/manuals/v1/manifest.json', sha256: sha(v1Manifest), kind: 'manual' };
+  const r1f: ResourceRef = { url: '/manuals/v1/faults.json', sha256: sha(sharedFaults), kind: 'faults' };
+  // 地址变化，但摘要与 v1 faults 完全一致。
+  const r2m: ResourceRef = { url: '/manuals/v2/manifest.json', sha256: sha(v2Manifest), kind: 'manual' };
+  const r2f: ResourceRef = { url: '/manuals/v2/shared/faults.json', sha256: sha(sharedFaults), kind: 'faults' };
+  const entryOf = (version: string, resources: ResourceRef[]): CatalogEntry => ({
+    version,
+    releasedAt: '2026-01-01',
+    title: version,
+    stepCount: 1,
+    resources,
+    resourcesSha256: sha(Buffer.from(encodeCanonicalResourceList(resources))),
+  });
+  const v1 = entryOf('1.0.0', [r1m, r1f]);
+  const v2 = entryOf('2.0.0', [r2m, r2f]);
+  return {
+    v1,
+    v2,
+    bodies: new Map([
+      [r1m.url, v1Manifest],
+      [r1f.url, sharedFaults],
+      [r2m.url, v2Manifest],
+      [r2f.url, sharedFaults],
+    ]),
   };
 };
 
@@ -54,6 +89,8 @@ interface FakePorts extends InstallerPorts {
   bodies: Map<string, string>;
   routes: Map<string, Route>;
   calls: string[];
+  fetchUrls: string[];
+  availableBytes: number | null;
   setRoute(url: string, route: Route): void;
   pendingFetch: Map<string, { reject: (e: unknown) => void }>;
 }
@@ -65,6 +102,8 @@ const makePorts = (bodies: Map<string, string>): FakePorts => {
     bodies,
     routes: new Map(),
     calls: [],
+    fetchUrls: [],
+    availableBytes: null,
     pendingFetch: new Map(),
 
     setRoute(url, route) {
@@ -78,8 +117,15 @@ const makePorts = (bodies: Map<string, string>): FakePorts => {
       this.calls.push('save');
       this.store = JSON.parse(JSON.stringify(state)) as PersistedState;
     },
+    async commitStateIfPending(state, expectedGeneration) {
+      if (this.store.pending?.installId !== expectedGeneration) return false;
+      this.calls.push('commit');
+      this.store = JSON.parse(JSON.stringify(state)) as PersistedState;
+      return true;
+    },
 
     async fetchResource(ref, signal) {
+      this.fetchUrls.push(ref.url);
       const route = this.routes.get(ref.url) ?? { mode: 'ok' };
       if (route.mode === 'network') {
         throw new TypeError('Failed to fetch');
@@ -110,6 +156,10 @@ const makePorts = (bodies: Map<string, string>): FakePorts => {
       return createHash('sha256').update(Buffer.from(bytes)).digest('hex');
     },
 
+    async estimateAvailableCapacity() {
+      return this.availableBytes;
+    },
+
     async openCache(name): Promise<ManualCacheLike> {
       let map = this.caches.get(name);
       if (!map) {
@@ -117,6 +167,15 @@ const makePorts = (bodies: Map<string, string>): FakePorts => {
         this.caches.set(name, map);
       }
       return {
+        get: async (url) => {
+          const response = map!.get(url);
+          if (!response) return null;
+          const buffer = await response.clone().arrayBuffer();
+          return {
+            bytes: new Uint8Array(buffer),
+            contentType: response.headers.get('content-type') ?? 'application/json',
+          };
+        },
         put: async (url, bytes, contentType) => {
           const route = this.routes.get(url);
           if (route?.mode === 'quotaOnPut') throw new QuotaError();
@@ -126,6 +185,17 @@ const makePorts = (bodies: Map<string, string>): FakePorts => {
             new Response(bytes, { headers: { 'Content-Type': contentType } }),
           );
         },
+      };
+    },
+
+    async readCacheEntry(cacheName, ref) {
+      const map = this.caches.get(cacheName);
+      const response = map?.get(ref.url);
+      if (!response) return null;
+      const buffer = await response.clone().arrayBuffer();
+      return {
+        bytes: new Uint8Array(buffer),
+        contentType: response.headers.get('content-type') ?? 'application/json',
       };
     },
 
@@ -280,7 +350,13 @@ describe('InstallerCoordinator 状态协调', () => {
     const leftover = stageCacheNameFor('2.0.0', 'leftover');
     ports.store = {
       ...ports.store,
-      pending: { version: '2.0.0', cacheName: leftover, startedAt: 900 },
+      pending: {
+        version: '2.0.0',
+        cacheName: leftover,
+        installId: 'leftover',
+        mode: 'full',
+        startedAt: 900,
+      },
     };
     const halfCache = new Map<string, Response>();
     halfCache.set(v2.entry.resources[0].url, new Response('partial'));
@@ -335,6 +411,128 @@ describe('InstallerCoordinator 状态协调', () => {
     expect(names).toEqual([ports.store.activeCacheName]);
     expect(names).not.toContain(v1Cache);
   });
+
+  it('摘要复用：下载地址变化时按摘要复制已核验字节；断网只影响变化资源', async () => {
+    const data = makeReuseEntry();
+    const ports = makePorts(data.bodies);
+    const c = new InstallerCoordinator(ports);
+    await c.init();
+    await c.install(data.v1);
+    const v1Cache = activeCacheNameOf(ports);
+    ports.fetchUrls.length = 0;
+
+    // v2 的 faults 已离线复用；只让发生变化的 manifest 请求断网，旧版仍必须完整保留。
+    ports.setRoute(data.v2.resources[0].url, { mode: 'network' });
+    await c.install(data.v2, { mode: 'reuse', activeEntry: data.v1 });
+    expect(c.getSnapshot()).toMatchObject({ activeVersion: '1.0.0' });
+    expect(c.getSnapshot().status).toMatchObject({ kind: 'failed', code: 'network' });
+    expect(ports.fetchUrls).toEqual([data.v2.resources[0].url]);
+    expect(ports.caches.has(v1Cache)).toBe(true);
+    expect([...ports.caches.keys()].filter((k) => k.includes(':2.0.0:'))).toEqual([]);
+
+    ports.routes.clear();
+    await c.install(data.v2, { mode: 'reuse', activeEntry: data.v1 });
+
+    expect(c.getSnapshot()).toMatchObject({ activeVersion: '2.0.0' });
+    expect(c.getSnapshot().status).toMatchObject({ kind: 'activated' });
+    expect(ports.fetchUrls).toEqual([data.v2.resources[0].url, data.v2.resources[0].url]);
+    expect(ports.fetchUrls).not.toContain(data.v2.resources[1].url);
+    const v2Cache = ports.caches.get(ports.store.activeCacheName!)!;
+    expect(v2Cache.has(data.v2.resources[1].url)).toBe(true);
+    expect(await ports.listManualCaches()).toEqual([ports.store.activeCacheName]);
+    expect(ports.caches.has(v1Cache)).toBe(false);
+  });
+
+  it('摘要复用单项变更：只下载变化资源，随后逐项与整份清单重新校验', async () => {
+    const data = makeReuseEntry();
+    const ports = makePorts(data.bodies);
+    const c = new InstallerCoordinator(ports);
+    await c.init();
+    await c.install(data.v1);
+    ports.fetchUrls.length = 0;
+
+    await c.install(data.v2, { mode: 'reuse', activeEntry: data.v1 });
+
+    expect(ports.fetchUrls).toEqual([data.v2.resources[0].url]);
+    const cache = ports.caches.get(ports.store.activeCacheName!)!;
+    expect(cache.size).toBe(2);
+  });
+
+  it('暂存区落盘后被篡改：复核失败，不激活且保留旧版', async () => {
+    const data = makeReuseEntry();
+    const ports = makePorts(data.bodies);
+    const c = new InstallerCoordinator(ports);
+    await c.init();
+    await c.install(data.v1);
+    const v1Cache = activeCacheNameOf(ports);
+
+    // 在获取/复制结束、最终复核前破坏新暂存缓存。
+    const target = data.v2.resources[0].url;
+    const originalOpen = ports.openCache.bind(ports);
+    let calls = 0;
+    ports.openCache = async (name) => {
+      calls++;
+      const cache = await originalOpen(name);
+      if (name.includes(':2.0.0:') && calls === 2) {
+        await cache.put(target, new TextEncoder().encode('corrupt-after-staging'), 'application/json');
+      }
+      return cache;
+    };
+
+    await c.install(data.v2, { mode: 'reuse', activeEntry: data.v1 });
+
+    expect(c.getSnapshot().activeVersion).toBe('1.0.0');
+    expect(c.getSnapshot().status).toMatchObject({ kind: 'failed', code: 'checksum' });
+    expect(ports.caches.has(v1Cache)).toBe(true);
+    expect(ports.store.activeCacheName).toBe(v1Cache);
+  });
+
+  it('容量预估不足：复制前失败，不生成新激活版本且旧版保留', async () => {
+    const data = makeReuseEntry();
+    const ports = makePorts(data.bodies);
+    const c = new InstallerCoordinator(ports);
+    await c.init();
+    await c.install(data.v1);
+    const v1Cache = activeCacheNameOf(ports);
+    ports.availableBytes = 1;
+
+    await c.install(data.v2, { mode: 'reuse', activeEntry: data.v1 });
+
+    expect(c.getSnapshot().activeVersion).toBe('1.0.0');
+    expect(c.getSnapshot().status).toMatchObject({ kind: 'failed', code: 'quota' });
+    expect(ports.caches.has(v1Cache)).toBe(true);
+    expect(await ports.listManualCaches()).toEqual([v1Cache]);
+  });
+
+  it('迟到安装代次不得提交：IDB 已有新 pending 时旧尝试只失败，不激活旧候选', async () => {
+    const v1 = makeEntry('1.0.0');
+    const ports = makePorts(v1.bodies);
+    ports.setRoute(v1.entry.resources[0].url, { mode: 'hang' });
+    const c = new InstallerCoordinator(ports);
+    await c.init();
+
+    const oldAttempt = c.install(v1.entry);
+    await waitFor(() => c.getSnapshot().status.kind === 'installing');
+    const oldInstallId = (c.getSnapshot().status as { installId: string }).installId;
+    ports.store = {
+      ...ports.store,
+      pending: {
+        ...ports.store.pending!,
+        installId: 'newer-install',
+        cacheName: stageCacheNameFor('1.0.0', 'newer-install'),
+      },
+    };
+    ports.pendingFetch.get(v1.entry.resources[0].url)?.reject(
+      Object.assign(new Error('aborted'), { name: 'AbortError' }),
+    );
+    await oldAttempt;
+
+    expect(c.getSnapshot().status).toMatchObject({ kind: 'failed', code: 'canceled' });
+    expect(ports.store.activeVersion).toBeNull();
+    expect(ports.store.pending?.installId).toBe('newer-install');
+    expect((c.getSnapshot().status as { installId?: string }).installId).toBe(oldInstallId);
+  });
+
 
   it('重复发起安装被忽略，同一时刻只有一个安装', async () => {
     const v1 = makeEntry('1.0.0');

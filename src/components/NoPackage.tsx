@@ -1,4 +1,4 @@
-import type { CatalogEntry, FailureCode } from '../core/types';
+import type { CatalogEntry, FailureCode, InstallMode } from '../core/types';
 import { VersionCard, type InstallFailure, type InstallProgress } from './InstallControls';
 
 interface Props {
@@ -7,7 +7,7 @@ interface Props {
   installing: InstallProgress | null;
   failed: InstallFailure | null;
   failureText: Record<FailureCode, string>;
-  onInstall: (version: string) => void;
+  onInstall: (version: string, mode: InstallMode) => void;
   onCancel: () => void;
 }
 

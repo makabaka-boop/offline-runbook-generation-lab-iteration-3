@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { coordinator, useInstaller } from '../state/use-installer';
 import { catalog, findEntry, loadManual, type ManualBundle } from '../manuals';
-import type { FailureCode } from '../core/types';
+import type { FailureCode, InstallMode } from '../core/types';
 import { FAILURE_TEXT } from '../core/types';
 import { NoPackage } from './NoPackage';
 import { Workshop } from './Workshop';
@@ -55,6 +55,15 @@ export function Booted({ swReady }: Props) {
     [active],
   );
 
+  const startInstall = (version: string, mode: InstallMode) => {
+    const entry = findEntry(version);
+    if (!entry) return;
+    void coordinator.install(entry, {
+      mode,
+      activeEntry: mode === 'reuse' ? activeCatalogEntry ?? null : null,
+    });
+  };
+
   if (!ready) {
     return (
       <div className="banner info" data-testid="boot-loading">
@@ -71,10 +80,7 @@ export function Booted({ swReady }: Props) {
         installing={installing}
         failed={failed as { version: string | null; code: FailureCode } | null}
         failureText={FAILURE_TEXT}
-        onInstall={(version) => {
-          const entry = findEntry(version);
-          if (entry) void coordinator.install(entry);
-        }}
+        onInstall={startInstall}
         onCancel={() => void coordinator.cancel()}
       />
     );
@@ -96,10 +102,7 @@ export function Booted({ swReady }: Props) {
       failureText={FAILURE_TEXT}
       switchNotice={switchNotice}
       dismissSwitchNotice={() => setSwitchNotice(false)}
-      onInstall={(version) => {
-        const entry = findEntry(version);
-        if (entry) void coordinator.install(entry);
-      }}
+      onInstall={startInstall}
       onCancel={() => void coordinator.cancel()}
     />
   );

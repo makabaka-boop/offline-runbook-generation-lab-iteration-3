@@ -36,6 +36,8 @@ export interface CatalogEntry {
   title: string;
   stepCount: number;
   resources: ResourceRef[];
+  /** 对整份资源清单（URL、摘要、类型及顺序）的 SHA-256，防止单项之外的清单结构被替换。 */
+  resourcesSha256: string;
 }
 
 /** 安装失败原因分类。 */
@@ -43,7 +45,7 @@ export type FailureCode =
   | 'checksum' // 校验失败
   | 'network' // 断网 / 下载失败
   | 'quota' // 配额异常
-  | 'canceled' // 取消
+  | 'canceled' // 取消 / 过期安装代次
   | 'unknown';
 
 export const FAILURE_TEXT: Record<FailureCode, string> = {
@@ -54,12 +56,16 @@ export const FAILURE_TEXT: Record<FailureCode, string> = {
   unknown: '安装发生未知错误，未激活缓存已清理',
 };
 
+export type InstallMode = 'full' | 'reuse';
+
 /** IndexedDB 中唯一持久化的记录（当前代际与安装状态）。 */
 export interface PersistedState {
   /** 当前已激活的完整版本；从未成功安装时为 null。 */
   activeVersion: string | null;
   /** 已激活版本缓存的 Cache Storage 键名。 */
   activeCacheName: string | null;
+  /** 已激活代次的唯一安装 ID；缓存名也必须携带同一 ID。 */
+  activeGeneration: string | null;
   /**
    * 正在进行中的安装（用于关闭后重开时识别“半包”）。
    * 一旦存在即视为中断残留，启动时清理并永不激活。
@@ -67,6 +73,8 @@ export interface PersistedState {
   pending: {
     version: string;
     cacheName: string;
+    installId: string;
+    mode: InstallMode;
     startedAt: number;
   } | null;
 }
@@ -74,6 +82,7 @@ export interface PersistedState {
 export const INITIAL_PERSISTED_STATE: PersistedState = {
   activeVersion: null,
   activeCacheName: null,
+  activeGeneration: null,
   pending: null,
 };
 
@@ -81,15 +90,21 @@ export type InstallerStatus =
   | { kind: 'idle' }
   | {
       kind: 'installing';
+      installId: string;
+      mode: InstallMode;
       version: string;
+      phase: 'acquire' | 'verify';
       /** 0–100 的整数进度。 */
       progress: number;
       completed: number;
       total: number;
+      reused: number;
+      fetched: number;
+      verified: number;
       cancelRequested: boolean;
     }
-  | { kind: 'activated'; version: string }
-  | { kind: 'failed'; version: string | null; code: FailureCode };
+  | { kind: 'activated'; installId: string; version: string }
+  | { kind: 'failed'; installId?: string; version: string | null; code: FailureCode };
 
 export interface Snapshot {
   activeVersion: string | null;

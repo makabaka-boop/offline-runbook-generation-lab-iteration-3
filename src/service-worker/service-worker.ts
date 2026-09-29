@@ -10,6 +10,7 @@
  * 构建期由 plugins/sw-build.ts 通过 esbuild define 注入 SW_VERSION / SW_PRECACHE。
  */
 import { readState } from '../core/idb';
+import { cacheNameMatchesGeneration } from '../core/generation';
 
 declare const SW_VERSION: string;
 declare const SW_PRECACHE: { url: string; revision: string }[];
@@ -17,7 +18,6 @@ declare const SW_PRECACHE: { url: string; revision: string }[];
 const sw = self as unknown as ServiceWorkerGlobalScope & { __WB_MANIFEST?: unknown };
 
 const SHELL_CACHE = `shell:${SW_VERSION}`;
-const STAGE_PREFIX = 'manual:stage:';
 
 const PRECACHE_URLS = new Set(SW_PRECACHE.map((e) => e.url).concat(['/', '/index.html']));
 const PRECACHE_MAP = new Map(SW_PRECACHE.map((e) => [e.url, e.revision]));
@@ -66,13 +66,11 @@ sw.addEventListener('activate', (event) => {
 const isManualResource = (url: URL): boolean =>
   url.origin === sw.location.origin && url.pathname.startsWith('/manuals/');
 
-/** 手册资源：仅从 IDB 指向的当前激活代际缓存出；暂存/半包缓存永不可见。 */
+/** 手册资源：仅从 IDB 指向且通过同一安装代次校验的激活缓存出；暂存/半包缓存永不可见。 */
 const serveActiveManual = async (request: Request): Promise<Response | undefined> => {
   const state = await readState();
-  if (!state.activeCacheName) return undefined;
-  // 激活缓存命名形如 manual:stage:<version>:<attempt>，但任何带 stage 前缀的缓存
-  // 是否可见，完全取决于 IDB 中的指针；半包没有指针，因此天然不可见。
-  if (!state.activeCacheName.startsWith(STAGE_PREFIX)) return undefined;
+  if (!state.activeCacheName || !state.activeGeneration) return undefined;
+  if (!cacheNameMatchesGeneration(state.activeCacheName, state.activeGeneration)) return undefined;
   const cache = await caches.open(state.activeCacheName);
   const hit = await cache.match(request, { ignoreSearch: true });
   return hit ?? undefined;

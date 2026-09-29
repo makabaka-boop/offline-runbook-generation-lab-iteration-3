@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { CatalogEntry, FailureCode } from '../core/types';
+import type { CatalogEntry, FailureCode, InstallMode } from '../core/types';
 import type { ManualBundle } from '../manuals';
 import {
   VersionCard,
@@ -25,7 +25,7 @@ interface Props {
   failureText: Record<FailureCode, string>;
   switchNotice: boolean;
   dismissSwitchNotice: () => void;
-  onInstall: (version: string) => void;
+  onInstall: (version: string, mode: InstallMode) => void;
   onCancel: () => void;
 }
 
@@ -92,7 +92,10 @@ export function Workshop(props: Props) {
 
       {installing && (
         <div className="banner info" data-testid="installing-banner">
-          正在安装版本 {installing.version}：{installing.completed}/{installing.total} ·{' '}
+          {installing.mode === 'reuse' ? '按摘要复用安装' : '完整下载安装'}版本 {installing.version}：
+          {installing.phase === 'acquire'
+            ? ` ${installing.completed}/${installing.total} · 复用 ${installing.reused} · 下载 ${installing.fetched} · `
+            : ` 暂存区复核 ${installing.verified}/${installing.total} · `}
           {installing.progress}%
           {installing.cancelRequested ? '（正在取消…）' : '。完成校验前不会替换当前手册。'}
         </div>
@@ -155,8 +158,8 @@ export function Workshop(props: Props) {
       <div className="panel">
         <h2>手册版本管理</h2>
         <div className="small" style={{ marginBottom: 10 }}>
-          新版本只有在所有资源下载且 SHA-256 校验通过后才会激活；中断、取消、断网或配额异常都会清理未激活缓存，
-          当前完整版本继续可用。
+          新版本只有在所有资源获取/复制且 SHA-256 与整单摘要校验通过后才会激活；中断、取消、断网或配额异常都会清理未激活缓存，
+          当前完整版本继续可用。复用安装只把当前已核验字节复制到新暂存区，激活后不引用旧缓存。
           {!swReady && '（离线服务尚未就绪，暂不能开始安装）'}
         </div>
         {catalog.map((entry) => (

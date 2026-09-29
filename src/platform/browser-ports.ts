@@ -5,8 +5,9 @@ import {
   QuotaError,
   type InstallerPorts,
   type ManualCacheLike,
+  type StagedResource,
 } from '../core/installer';
-import { readState, writeState } from '../core/idb';
+import { commitStateIfPending, readState, writeState } from '../core/idb';
 
 const isQuotaError = (err: unknown): boolean => {
   if (!err) return false;
@@ -19,10 +20,20 @@ const isQuotaError = (err: unknown): boolean => {
   );
 };
 
+const readCacheResponse = async (response: Response): Promise<StagedResource> => {
+  const buffer = await response.arrayBuffer();
+  return {
+    bytes: new Uint8Array(buffer),
+    contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+  };
+};
+
 export function createBrowserPorts(): InstallerPorts {
   return {
     loadState: () => readState(),
     saveState: (state: PersistedState) => writeState(state),
+    commitStateIfPending: (state, generation) =>
+      commitStateIfPending(state, generation),
 
     async fetchResource(ref: ResourceRef, signal: AbortSignal) {
       const response = await fetch(ref.url, {
@@ -35,11 +46,7 @@ export function createBrowserPorts(): InstallerPorts {
       if (!response.ok) {
         throw new HttpError(response.status);
       }
-      const buffer = await response.arrayBuffer();
-      return {
-        bytes: new Uint8Array(buffer),
-        contentType: response.headers.get('content-type') ?? 'application/octet-stream',
-      };
+      return readCacheResponse(response);
     },
 
     async sha256(bytes: Uint8Array) {
@@ -49,9 +56,26 @@ export function createBrowserPorts(): InstallerPorts {
         .join('');
     },
 
+    async estimateAvailableCapacity() {
+      if (!navigator.storage?.estimate) return null;
+      try {
+        const estimate = await navigator.storage.estimate();
+        if (typeof estimate.quota !== 'number' || typeof estimate.usage !== 'number') {
+          return null;
+        }
+        return Math.max(0, estimate.quota - estimate.usage);
+      } catch {
+        return null;
+      }
+    },
+
     async openCache(name: string): Promise<ManualCacheLike> {
       const cache = await caches.open(name);
       return {
+        async get(url) {
+          const hit = await cache.match(url, { ignoreSearch: false });
+          return hit ? readCacheResponse(hit) : null;
+        },
         async put(url: string, bytes: Uint8Array, contentType: string) {
           try {
             // 用已校验字节重建响应并写入，no-store 避免任何 HTTP 缓存语义影响代际内容。
@@ -69,6 +93,12 @@ export function createBrowserPorts(): InstallerPorts {
           }
         },
       };
+    },
+
+    async readCacheEntry(cacheName, ref) {
+      const cache = await caches.open(cacheName);
+      const hit = await cache.match(ref.url, { ignoreSearch: false });
+      return hit ? readCacheResponse(hit) : null;
     },
 
     deleteCache: (name: string) => caches.delete(name),

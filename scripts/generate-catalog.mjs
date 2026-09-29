@@ -14,6 +14,14 @@ const manualsDir = path.join(root, 'public', 'manuals');
 const outFile = path.join(root, 'src', 'manuals', 'catalog.json');
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+const canonicalResources = (resources) =>
+  JSON.stringify(
+    resources.map((ref) => ({
+      kind: ref.kind,
+      sha256: ref.sha256.toLowerCase(),
+      url: ref.url,
+    })),
+  );
 
 const versionDirs = readdirSync(manualsDir, { withFileTypes: true })
   .filter((d) => d.isDirectory())
@@ -27,8 +35,8 @@ const entries = versionDirs.map((dir) => {
   const manifest = JSON.parse(manifestRaw);
   const faults = JSON.parse(faultsRaw);
 
-  if (!manifest.version || manifest.version !== faults.version) {
-    throw new Error(`${dir}: 清单版本号与故障条目版本号不一致`);
+  if (!manifest.version) {
+    throw new Error(`${dir}: 清单缺少版本号`);
   }
   if (!Array.isArray(manifest.steps) || manifest.steps.length === 0) {
     throw new Error(`${dir}: 缺少有序步骤`);
@@ -44,6 +52,7 @@ const entries = versionDirs.map((dir) => {
     { url: `${base}/manifest.json`, sha256: sha256(Buffer.from(manifestRaw)), kind: 'manual' },
     { url: `${base}/faults.json`, sha256: sha256(Buffer.from(faultsRaw)), kind: 'faults' },
   ];
+  const resourcesSha256 = sha256(Buffer.from(canonicalResources(resources)));
 
   return {
     version: manifest.version,
@@ -51,6 +60,7 @@ const entries = versionDirs.map((dir) => {
     title: manifest.title,
     stepCount: manifest.steps.length,
     resources,
+    resourcesSha256,
   };
 });
 

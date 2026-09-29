@@ -1,19 +1,27 @@
-import type { CatalogEntry, FailureCode } from '../core/types';
+import type { CatalogEntry, FailureCode, InstallMode } from '../core/types';
 
 export interface InstallProgress {
+  installId: string;
+  mode: InstallMode;
+  phase: 'acquire' | 'verify';
   version: string;
   progress: number;
   completed: number;
   total: number;
+  reused: number;
+  fetched: number;
+  verified: number;
   cancelRequested: boolean;
 }
 
 export interface InstallFailure {
+  installId?: string;
   version: string | null;
   code: FailureCode;
 }
 
 export interface ActivatedInfo {
+  installId: string;
   version: string;
 }
 
@@ -25,7 +33,7 @@ export interface InstallControlsProps {
   failed: InstallFailure | null;
   activated?: ActivatedInfo | null;
   failureText: Record<FailureCode, string>;
-  onInstall: (version: string) => void;
+  onInstall: (version: string, mode: InstallMode) => void;
   onCancel: () => void;
 }
 
@@ -44,13 +52,14 @@ export function VersionCard({
   swReady: boolean;
   installing: InstallProgress | null;
   failed: InstallFailure | null;
-  onInstall: (version: string) => void;
+  onInstall: (version: string, mode: InstallMode) => void;
   onCancel: () => void;
   compact?: boolean;
 }) {
   const isActive = entry.version === activeVersion;
   const isInstallingThis = installing?.version === entry.version;
   const failedHere = failed?.version === entry.version;
+  const otherInstalling = installing !== null && installing.version !== entry.version;
 
   return (
     <div className="card" data-testid={`catalog-card-${entry.version}`}>
@@ -73,7 +82,12 @@ export function VersionCard({
       {isInstallingThis && installing && (
         <div data-testid={`installing-${entry.version}`}>
           <div className="small">
-            正在下载并校验 {installing.completed}/{installing.total}（{installing.progress}%）…
+            {installing.phase === 'acquire' ? '正在获取/复制' : '正在复核暂存区'}
+            {' '}
+            {installing.phase === 'acquire'
+              ? `${installing.completed}/${installing.total}（复用 ${installing.reused}、下载 ${installing.fetched}）`
+              : `${installing.verified}/${installing.total}`}
+            （{installing.progress}%）…
             {installing.cancelRequested && ' 正在取消…'}
           </div>
           <div className="progress">
@@ -86,14 +100,26 @@ export function VersionCard({
       )}
 
       {!isInstallingThis && (
-        <button
-          className={isActive ? '' : 'primary'}
-          data-testid={`install-${entry.version}`}
-          disabled={!swReady || (installing !== null && installing.version !== entry.version)}
-          onClick={() => onInstall(entry.version)}
-        >
-          {isActive ? '重新下载并校验（重装）' : `安装并激活 ${entry.version}`}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button
+            className={isActive ? '' : 'primary'}
+            data-testid={`install-${entry.version}`}
+            disabled={!swReady || otherInstalling}
+            onClick={() => onInstall(entry.version, 'full')}
+          >
+            {isActive ? '重新下载并校验（重装）' : `完整安装 ${entry.version}`}
+          </button>
+          {!isActive && (
+            <button
+              data-testid={`reuse-install-${entry.version}`}
+              disabled={!swReady || otherInstalling || !activeVersion}
+              title={activeVersion ? '只下载摘要变化的资源，其余从当前已核验版本复制' : '需先完整安装一个版本'}
+              onClick={() => onInstall(entry.version, 'reuse')}
+            >
+              按摘要复用安装
+            </button>
+          )}
+        </div>
       )}
 
       {failedHere && failed && (
